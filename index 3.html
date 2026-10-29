@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Daily Attendance</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--bg:#f3f7fd;--card:#fff;--tx:#10243e;--mu:#5b6b80;--bl:#1d5fd1;--bd:#d6e2f3;--gr:#1e9e4a;--or:#f08a00;--rd:#c62828}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:17px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{background:var(--bl);color:#fff;padding:14px 16px;font-weight:700;font-size:20px;display:flex;justify-content:space-between;align-items:center}
+header button{min-height:40px;padding:6px 14px;font-size:15px;background:#fff;color:var(--bl)}
+nav{display:flex;gap:8px;padding:10px;max-width:900px;margin:auto}nav a{flex:1;text-align:center;padding:14px 6px;border-radius:12px;background:var(--card);border:1px solid var(--bd);color:var(--bl);text-decoration:none;font-weight:600}nav a.on{background:var(--bl);color:#fff}
+main{max-width:900px;margin:auto;padding:10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:18px;margin-bottom:14px}
+h2{margin:0 0 10px;font-size:22px}.date{font-size:28px;font-weight:800;color:var(--bl)}.mu{color:var(--mu)}
+.pill{display:inline-block;padding:6px 14px;border-radius:99px;color:#fff;font-weight:700}.done{background:var(--gr)}.pend{background:var(--or)}
+button,.btn{min-height:54px;padding:12px 20px;border:0;border-radius:12px;background:var(--bl);color:#fff;font:600 18px system-ui;cursor:pointer}
+button.sec{background:transparent;color:var(--bl);border:2px solid var(--bl)}button.red{background:var(--rd)}button:disabled{opacity:.45;cursor:not-allowed}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.grid button{min-height:80px;font-size:19px}
+input,textarea{width:100%;min-height:50px;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;font:inherit}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.msg{padding:14px;border-radius:12px;margin:10px 0;font-weight:600}.ok{background:#e3f6ea;color:#14672f}.err{background:#fde7e7;color:#8c1c1c}.info{background:#fff3df;color:#7a4a00}
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:12px}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px 8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}th{color:var(--mu);font-size:14px}
+</style></head><body>
+<header><span>📋 Daily Attendance</span><button id="adm"></button></header>
+<nav id="nav"><a href="#home">Home</a><a href="#attendance">Attendance</a><a href="#history">History</a><a href="#names">Names</a></nav>
+<main id="app"><div class="card">Loading…</div></main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ====== PUT YOUR SUPABASE VALUES HERE (Project Settings > API) ======
+var SUPABASE_URL='https://yrxysojhhmdhnwvlddex.supabase.co';
+var SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlyeHlzb2poaG1kaG53dmxkZGV4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMyNjczNTIsImV4cCI6MjEwODg0MzM1Mn0.RhRoK3oDrpGvOjh5ICjaLV2r4VpJRFiz6IPzjX1MlB0';
+// ====================================================================
+var sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+var pin=null,TODAY=null,workers=[],att=[],selected=null,flash=null,editing=false,busy=false,ready=false,fatal=null;
+function fmt(k){var p=String(k).slice(0,10).split('-');return p[2]+'-'+p[1]+'-'+p[0]}
+function longDate(){var p=TODAY.split('-');return new Date(p[0],p[1]-1,p[2]).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}
+function esc(s){return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function todayRec(){return att.find(function(a){return a.attendance_date===TODAY})}
+function route(){return (location.hash||'#home').slice(1)}
+async function load(){
+  var a=await sb.rpc('today_date');if(a.error)throw a.error;TODAY=a.data;
+  var w=await sb.from('workers').select('*').order('name');if(w.error)throw w.error;workers=w.data;
+  var h=await sb.from('attendance').select('*, w:workers!attendance_worker_id_fkey(name)').order('attendance_date',{ascending:false});if(h.error)throw h.error;att=h.data;
+  ready=true;fatal=null;render();
+}
+async function refresh(){try{await load()}catch(e){fatal='Cannot reach the database. Check your internet and try again.';render()}}
+async function rpc(name,args){var r=await sb.rpc(name,args);if(r.error)throw r.error;return r.data}
+async function claim(id){
+  if(busy)return;busy=true;flash=null;render();
+  try{var r=await rpc('mark_attendance',{p_worker:id});
+    if(r.ok)flash={t:'ok',m:'Attendance Successfully Recorded!',who:r.name};
+    else if(r.already)flash={t:'info',m:'Today\u2019s attendance is already completed by '+r.name+'.'};
+    else flash={t:'err',m:r.error||'Could not save attendance.'};
+    await load()}catch(e){flash={t:'err',m:'Attendance could not be saved. Please try again.'}}
+  finally{busy=false;selected=null;render()}
+}
+async function admin(name,args,okmsg){
+  try{var r=await rpc(name,Object.assign({p_pin:pin},args));
+    if(r.ok){flash={t:'ok',m:okmsg};editing=false}else{flash={t:'err',m:r.error};if(r.error==='Wrong PIN'){pin=null;setAdm()}}
+    await load()}catch(e){flash={t:'err',m:'Could not save. Please try again.'}}
+  render()
+}
+function setAdm(){var b=document.getElementById('adm');b.textContent=pin?'Admin ✓ (log out)':'Admin login'}
+document.getElementById('adm').onclick=async function(){
+  if(pin){pin=null;setAdm();render();return}
+  var p=prompt('Enter admin PIN');if(!p)return;
+  try{if(await rpc('verify_pin',{p_pin:p})){pin=p;flash=null}else alert('Wrong PIN')}catch(e){alert('Could not check PIN')}
+  setAdm();render();
+};
+function head(){return flash?'<div class="msg '+flash.t+'">'+esc(flash.m)+'</div>':''}
+function vHome(){var r=todayRec();
+  return '<div class="card"><div class="mu">Today</div><div class="date">'+esc(longDate())+'</div><p>Status: '+(r?'<span class="pill done">Completed</span>':'<span class="pill pend">Pending</span>')+'</p>'+
+  (r?'<p style="font-size:20px"><b>'+esc(r.w.name)+'</b> has completed today\u2019s work.</p>':'<p class="mu">No attendance recorded yet today.</p>')+'<p><a class="btn" style="display:inline-block;text-decoration:none;line-height:30px" href="#attendance">Go to Attendance</a></p></div>'}
+function vAtt(){var r=todayRec(),h='<div class="card"><div class="date">'+esc(longDate())+'</div></div>'+head();
+  var act=workers.filter(function(w){return w.active});
+  if(r){h+='<div class="msg info">Today\u2019s attendance is already completed by '+esc(r.w.name)+'.</div>';
+    if(pin){h+='<div class="card"><h2>Edit today\u2019s attendance</h2>'+(r.edit_count>=1?'<p class="mu">The one allowed edit has been used.</p>':(editing?'<p>Pick the correct worker:</p><div class="grid">'+act.filter(function(w){return w.id!==r.worker_id}).map(function(w){return '<button data-edit="'+w.id+'">'+esc(w.name)+'</button>'}).join('')+'</div>':'<button class="sec" id="startedit">Edit (1 allowed)</button>'))+'</div>'}
+    return h}
+  if(selected){var w=workers.find(function(x){return x.id===selected});
+    return h+'<div class="card"><h2>Confirm Attendance</h2><p style="font-size:22px"><b>'+esc(w.name)+'</b></p><p>Date: '+fmt(TODAY)+'</p><div class="row"><button id="confirm" '+(busy?'disabled':'')+'>Confirm Attendance</button><button class="sec" id="cancel">Cancel</button></div></div>'}
+  if(flash&&flash.who)return h+'<div class="card"><p style="font-size:22px"><b>'+esc(flash.who)+'</b></p><span class="pill done">Present</span></div>';
+  if(!act.length)return h+'<div class="card">No names yet. Add workers on the Names page.</div>';
+  return h+'<div class="card"><h2>Tap your name</h2><div class="grid">'+act.map(function(w){return '<button data-sel="'+w.id+'">'+esc(w.name)+'</button>'}).join('')+'</div></div>'}
+function vHist(){var q=(window._q||'').toLowerCase(),d=window._d||'',m=window._m||'';
+  var rows=att.filter(function(a){return (!q||a.w.name.toLowerCase().includes(q))&&(!d||a.attendance_date===d)&&(!m||a.attendance_date.slice(0,7)===m)});
+  var cnt={};att.forEach(function(a){cnt[a.w.name]=(cnt[a.w.name]||0)+1});
+  return '<div class="card"><h2>Attendance History</h2><div class="filters"><input id="fq" placeholder="Search worker" value="'+esc(window._q||'')+'"><input id="fd" type="date" value="'+d+'"><input id="fm" type="month" value="'+m+'"></div><div class="tw"><table><tr><th>S.No.</th><th>Date</th><th>Name</th><th>Status</th><th>Completed on</th></tr>'+
+  (rows.map(function(a,i){return '<tr><td>'+(i+1)+'</td><td>'+fmt(a.attendance_date)+'</td><td>'+esc(a.w.name)+'</td><td>'+esc(a.status)+'</td><td>'+fmt(new Date(a.updated_at).toLocaleDateString('en-CA'))+'</td></tr>'}).join('')||'<tr><td colspan="5" class="mu">No records found.</td></tr>')+'</table></div></div>'+
+  '<div class="card"><h2>Total attendance per worker</h2><div class="tw"><table><tr><th>Worker</th><th>Days</th></tr>'+(Object.keys(cnt).sort().map(function(n){return '<tr><td>'+esc(n)+'</td><td>'+cnt[n]+'</td></tr>'}).join('')||'<tr><td colspan="2" class="mu">Nothing yet.</td></tr>')+'</table></div></div>'}
+function vNames(){var h=head(),act=workers.filter(function(w){return w.active});
+  if(!pin)return h+'<div class="card"><h2>Manage Names</h2><p class="mu">Tap “Admin login” at the top and enter the PIN to add, edit or remove names.</p>'+act.map(function(w){return '<div>'+esc(w.name)+'</div>'}).join('')+'</div>';
+  return h+'<div class="card"><h2>Add Name</h2><p class="mu">One name per line, or separated by commas.</p><textarea id="newn" rows="3"></textarea><p><button id="addn">Add Name</button></p></div><div class="card"><h2>Saved names</h2>'+
+  (act.map(function(w){return '<div class="row"><span style="flex:1">'+esc(w.name)+'</span><button class="sec" data-ren="'+w.id+'">Edit</button><button class="red" data-rem="'+w.id+'">Remove</button></div>'}).join('')||'<p class="mu">No names yet.</p>')+'</div>'}
+function render(){
+  document.querySelectorAll('#nav a').forEach(function(a){a.classList.toggle('on',a.getAttribute('href')==='#'+route())});
+  var app=document.getElementById('app');
+  if(fatal){app.innerHTML='<div class="card"><div class="msg err">'+esc(fatal)+'</div><button id="retry">Try again</button></div>';return}
+  if(!ready)return;
+  var f=document.activeElement&&document.activeElement.id,pos=document.activeElement&&document.activeElement.selectionStart,r=route();
+  app.innerHTML=r==='attendance'?vAtt():r==='history'?vHist():r==='names'?vNames():vHome();
+  if(f&&/^f[qdm]$/.test(f)){var e=document.getElementById(f);e.focus();try{e.setSelectionRange(pos,pos)}catch(_){}}
+}
+document.addEventListener('click',function(e){var t=e.target.closest('button');if(!t)return;
+  if(t.id==='retry')refresh();
+  else if(t.dataset.sel){selected=t.dataset.sel;flash=null;render()}
+  else if(t.id==='cancel'){selected=null;render()}
+  else if(t.id==='confirm'){claim(selected)}
+  else if(t.id==='startedit'){editing=true;render()}
+  else if(t.dataset.edit){admin('edit_attendance',{p_worker:t.dataset.edit},'Attendance updated. No further edits are allowed today.')}
+  else if(t.id==='addn'){var n=document.getElementById('newn').value.split(/[\n,]+/).map(function(x){return x.trim()}).filter(Boolean);if(n.length)admin('add_workers',{p_names:n},n.length+' name(s) saved.')}
+  else if(t.dataset.ren){var w=workers.find(function(x){return x.id===t.dataset.ren}),nn=prompt('Edit name',w.name);if(nn&&nn.trim())admin('rename_worker',{p_id:w.id,p_name:nn},'Name updated.')}
+  else if(t.dataset.rem){if(confirm('Remove this name? Past attendance stays in history.'))admin('remove_worker',{p_id:t.dataset.rem},'Name removed.')}});
+document.addEventListener('input',function(e){if(e.target.id==='fq'){window._q=e.target.value;render()}if(e.target.id==='fd'){window._d=e.target.value;render()}if(e.target.id==='fm'){window._m=e.target.value;render()}});
+window.addEventListener('hashchange',function(){flash=null;selected=null;editing=false;render()});
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&!busy)refresh()});
+setInterval(function(){if(!busy&&!document.hidden&&route()!=='names')refresh()},20000);
+setAdm();refresh();
+</script></body></html>
